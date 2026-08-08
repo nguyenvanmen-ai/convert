@@ -3,25 +3,28 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Chuyển đổi PDF & Ảnh Giữ Nguyên Định Dạng (Docx, Excel, Text)</title>
+  <title>Trích Xuất & Tải File Giữ Định Dạng Chuẩn</title>
   
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- PDF.js library -->
+  <!-- PDF.js -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-  <!-- Tesseract.js library (OCR) -->
+  <!-- Tesseract.js (OCR) -->
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <!-- docx.js (Xuất file .docx chuyên nghiệp) -->
-  <script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js"></script>
-  <!-- SheetJS / xlsx (Xuất file .xlsx chuyên nghiệp) -->
+  <!-- SheetJS cho Excel -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <!-- Quill.js WYSIWYG Rich Text Editor -->
+  <!-- html-docx-js cho phép chuyển HTML trực tiếp sang Word giữ chuẩn CSS/Bố cục -->
+  <script src="https://cdn.jsdelivr.net/npm/html-docx-js@0.3.1/dist/html-docx.min.js"></script>
+  <!-- Quill Editor -->
   <link href="https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.snow.css" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.js"></script>
 
   <style>
     .drop-zone--over { border-color: #2563eb; background-color: #eff6ff; }
-    .ql-editor { min-height: 350px; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; line-height: 1.6; }
+    .ql-editor { min-height: 380px; font-family: 'Times New Roman', Times, serif; font-size: 16px; line-height: 1.5; }
+    /* Định dạng xem trước dạng bảng */
+    .ocr-table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+    .ocr-table td, .ocr-table th { border: 1px solid #cbd5e1; padding: 6px 10px; }
   </style>
 </head>
 <body class="bg-slate-50 min-h-screen text-slate-800 p-4 md:p-8">
@@ -29,8 +32,8 @@
     
     <!-- Header -->
     <header class="text-center space-y-2">
-      <h1 class="text-3xl md:text-4xl font-bold text-slate-900">Trích Xuất PDF & Ảnh - Giữ Định Dạng Chuẩn</h1>
-      <p class="text-slate-600">Tự động nhận diện cấu trúc, cột, bảng, khoảng cách & dòng để xuất file <b>DOCX</b> và <b>XLSX</b> chuẩn nhất</p>
+      <h1 class="text-3xl md:text-4xl font-bold text-slate-900">Xử Lý & Xuất File Word/Excel Chuẩn Định Dạng</h1>
+      <p class="text-slate-600">Trích xuất văn bản từ PDF/Ảnh, tự động tạo cấu trúc Đoạn, Bảng và Tiêu đề</p>
     </header>
 
     <!-- Upload Area -->
@@ -44,7 +47,7 @@
         </div>
         <div>
           <p class="text-lg font-medium text-slate-800">Kéo thả tệp PDF hoặc Ảnh vào đây</p>
-          <p class="text-sm text-slate-500 mt-1">Hỗ trợ file PDF (văn bản & bản scan), PNG, JPG, WEBP</p>
+          <p class="text-sm text-slate-500 mt-1">PDF văn bản, PDF scan, PNG, JPG, WEBP</p>
         </div>
         <p id="fileName" class="text-sm font-semibold text-blue-600 hidden"></p>
       </div>
@@ -61,8 +64,8 @@
         </select>
       </div>
 
-      <button id="convertBtn" disabled class="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-medium px-6 py-2.5 rounded-lg transition shadow-sm flex items-center space-x-2">
-        <span>Xử lý & Giữ Định Dạng</span>
+      <button id="convertBtn" disabled class="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-medium px-6 py-2.5 rounded-lg transition shadow-sm">
+        Bắt đầu xử lý
       </button>
     </div>
 
@@ -80,45 +83,42 @@
     <!-- Editor & Output Area -->
     <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden space-y-0">
       <div class="flex flex-wrap justify-between items-center px-4 py-3 bg-slate-100 border-b border-slate-200 gap-2">
-        <span class="font-medium text-sm text-slate-700">Xem trước & Chỉnh sửa Văn bản (Rich Text)</span>
+        <span class="font-medium text-sm text-slate-700">Xem trước định dạng (Có thể chỉnh sửa trực tiếp)</span>
         
-        <!-- Nút tải file các định dạng -->
+        <!-- Nút tải file -->
         <div class="flex items-center space-x-2">
-          <button id="downloadDocxBtn" disabled class="bg-blue-700 hover:bg-blue-800 disabled:bg-slate-300 text-white text-sm font-medium px-4 py-1.5 rounded-lg transition flex items-center space-x-1">
-            <span>Tải Word (.DOCX)</span>
+          <button id="downloadDocxBtn" disabled class="bg-blue-700 hover:bg-blue-800 disabled:bg-slate-300 text-white text-sm font-medium px-4 py-1.5 rounded-lg transition">
+            Tải Word (.DOCX)
           </button>
-          <button id="downloadXlsxBtn" disabled class="bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-300 text-white text-sm font-medium px-4 py-1.5 rounded-lg transition flex items-center space-x-1">
-            <span>Tải Excel (.XLSX)</span>
+          <button id="downloadXlsxBtn" disabled class="bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-300 text-white text-sm font-medium px-4 py-1.5 rounded-lg transition">
+            Tải Excel (.XLSX)
           </button>
           <button id="downloadTxtBtn" disabled class="bg-slate-700 hover:bg-slate-800 disabled:bg-slate-300 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition">
-            <span>.TXT</span>
+            .TXT
           </button>
         </div>
       </div>
       
-      <!-- Container Trình soạn thảo Quill -->
       <div id="editor"></div>
     </div>
 
   </div>
 
   <script>
-    // Cấu hình PDF.js worker
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-    // Khởi tạo Trình soạn thảo Soạn thảo Rich Text
     const quill = new Quill('#editor', {
       theme: 'snow',
       modules: {
         toolbar: [
           [{ 'header': [1, 2, 3, false] }],
-          ['bold', 'italic', 'underline', 'strike'],
+          ['bold', 'italic', 'underline'],
           [{ 'list': 'ordered'}, { 'list': 'bullet' }],
           [{ 'align': [] }],
           ['clean']
         ]
       },
-      placeholder: 'Nội dung trích xuất sẽ giữ nguyên cấu trúc tiêu đề, đoạn văn, danh sách và hiển thị tại đây...'
+      placeholder: 'Nội dung định dạng sẽ hiển thị ở đây...'
     });
 
     const dropZone = document.getElementById('dropZone');
@@ -137,28 +137,18 @@
     const languageSelect = document.getElementById('language');
 
     let selectedFile = null;
-    let extractedStructuredData = []; // Lưu trữ dữ liệu cấu trúc theo từng trang/đoạn
+    let rawStructuredLines = [];
 
-    // Drag & Drop Handling
-    ['dragenter', 'dragover'].forEach(eventName => {
-      dropZone.addEventListener(eventName, (e) => {
-        e.preventDefault();
-        dropZone.classList.add('drop-zone--over');
-      }, false);
+    // Drag & drop handlers
+    ['dragenter', 'dragover'].forEach(eName => {
+      dropZone.addEventListener(eName, (e) => { e.preventDefault(); dropZone.classList.add('drop-zone--over'); });
     });
-
-    ['dragleave', 'drop'].forEach(eventName => {
-      dropZone.addEventListener(eventName, (e) => {
-        e.preventDefault();
-        dropZone.classList.remove('drop-zone--over');
-      }, false);
+    ['dragleave', 'drop'].forEach(eName => {
+      dropZone.addEventListener(eName, (e) => { e.preventDefault(); dropZone.classList.remove('drop-zone--over'); });
     });
-
     dropZone.addEventListener('drop', (e) => {
-      const dt = e.dataTransfer;
-      if (dt.files && dt.files[0]) handleFileSelect(dt.files[0]);
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) handleFileSelect(e.dataTransfer.files[0]);
     });
-
     dropZone.addEventListener('click', () => fileInput.click());
     fileInput.addEventListener('change', (e) => {
       if (e.target.files && e.target.files[0]) handleFileSelect(e.target.files[0]);
@@ -187,283 +177,212 @@
       progressPercent.textContent = `${pct}%`;
     }
 
-    // Xử lý Chuyển đổi chính
     convertBtn.addEventListener('click', async () => {
       if (!selectedFile) return;
-
       convertBtn.disabled = true;
       setDownloadButtonsState(true);
       quill.setText('');
-      extractedStructuredData = [];
-      updateProgress('Đang phân tích tệp...', 0.05);
+      rawStructuredLines = [];
+      updateProgress('Đang phân tích định dạng...', 0.05);
 
       try {
         const lang = languageSelect.value;
-
         if (selectedFile.type === 'application/pdf') {
-          await processPdfStructured(selectedFile, lang);
-        } else if (selectedFile.type.startsWith('image/')) {
-          await processImageStructured(selectedFile, lang);
+          await processPdf(selectedFile, lang);
+        } else {
+          await processImage(selectedFile, lang);
         }
-
-        renderToEditor();
+        renderFormattedContent();
         setDownloadButtonsState(false);
-        updateProgress('Hoàn thành trích xuất định dạng!', 1);
+        updateProgress('Hoàn thành!', 1);
       } catch (err) {
         console.error(err);
-        alert('Có lỗi xảy ra: ' + err.message);
+        alert('Lỗi xử lý: ' + err.message);
         updateProgress('Thất bại', 0);
       } finally {
         convertBtn.disabled = false;
       }
     });
 
-    // 1. Xử lý PDF với Tọa độ & Cấu trúc Dòng/Đoạn
-    async function processPdfStructured(file, lang) {
+    async function processPdf(file, lang) {
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
 
-      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-        updateProgress(`Phân tích trang PDF ${pageNum}/${pdf.numPages}...`, (pageNum - 1) / pdf.numPages);
-        const page = await pdf.getPage(pageNum);
+      for (let p = 1; p <= pdf.numPages; p++) {
+        updateProgress(`Đang trích xuất trang ${p}/${pdf.numPages}...`, (p - 1) / pdf.numPages);
+        const page = await pdf.getPage(p);
         const textContent = await page.getTextContent();
 
         if (textContent.items.length > 0) {
-          // Trích xuất văn bản gốc kèm vị trí tọa độ (Y, X) để tái tạo dòng/bảng
-          const lines = groupTextByLines(textContent.items);
-          extractedStructuredData.push({ page: pageNum, lines: lines });
+          const lines = parsePdfLines(textContent.items);
+          rawStructuredLines.push(...lines);
         } else {
-          // Trang Scan -> Chạy OCR Tesseract
-          updateProgress(`Chạy OCR cho trang scan ${pageNum}/${pdf.numPages}...`, (pageNum - 0.5) / pdf.numPages);
           const viewport = page.getViewport({ scale: 2.0 });
           const canvas = document.createElement('canvas');
-          const context = canvas.getContext('2d');
+          const ctx = canvas.getContext('2d');
           canvas.height = viewport.height;
           canvas.width = viewport.width;
-
-          await page.render({ canvasContext: context, viewport: viewport }).promise;
-          const ocrLines = await processImageWithTesseract(canvas, lang);
-          extractedStructuredData.push({ page: pageNum, lines: ocrLines });
+          await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+          const ocrLines = await runTesseract(canvas, lang);
+          rawStructuredLines.push(...ocrLines);
         }
       }
     }
 
-    // 2. Gom nhóm văn bản theo Tọa độ Y (Sắp xếp từ trên xuống dưới, từ trái sang phải)
-    function groupTextByLines(items) {
-      const tolerance = 4; // Tọa độ Y chênh lệch nhỏ hơn 4px xem như cùng 1 dòng
-      let lineMap = [];
+    function parsePdfLines(items) {
+      const lineMap = [];
+      const tolerance = 5;
 
       items.forEach(item => {
-        if (!item.str.trim() && item.str !== ' ') return;
+        if (!item.str.trim()) return;
         const x = item.transform[4];
         const y = item.transform[5];
-        const height = item.height || Math.abs(item.transform[3]) || 12;
+        const height = Math.abs(item.transform[3]) || 12;
 
-        let foundLine = lineMap.find(l => Math.abs(l.y - y) < tolerance);
-        if (foundLine) {
-          foundLine.items.push({ x, text: item.str, height });
+        let line = lineMap.find(l => Math.abs(l.y - y) < tolerance);
+        if (line) {
+          line.items.push({ x, text: item.str, height });
         } else {
           lineMap.push({ y, items: [{ x, text: item.str, height }] });
         }
       });
 
-      // Sắp xếp các dòng từ TRÊN xuống DƯỚI (y giảm dần trong PDF)
       lineMap.sort((a, b) => b.y - a.y);
 
-      // Sắp xếp các từ trong từng dòng từ TRÁI sang PHẢI (x tăng dần)
-      return lineMap.map(line => {
-        line.items.sort((a, b) => a.x - b.x);
-        
-        let fullLineText = '';
-        let isTableCandidate = false;
+      return lineMap.map(l => {
+        l.items.sort((a, b) => a.x - b.x);
+        let fullStr = '';
         let cells = [];
-        let currentCell = '';
+        let curCell = '';
 
-        for (let i = 0; i < line.items.length; i++) {
-          const curr = line.items[i];
-          const prev = line.items[i - 1];
+        for (let i = 0; i < l.items.length; i++) {
+          const curr = l.items[i];
+          const prev = l.items[i - 1];
 
-          if (prev) {
-            const gap = curr.x - (prev.x + prev.text.length * 5);
-            if (gap > 25) { // Khoảng cách lớn giữa các chữ -> Phân tách Cột/Bảng
-              isTableCandidate = true;
-              cells.push(currentCell.trim());
-              currentCell = '';
-            }
+          if (prev && (curr.x - (prev.x + prev.text.length * 5)) > 20) {
+            cells.push(curCell.trim());
+            curCell = '';
           }
-          currentCell += curr.text + ' ';
-          fullLineText += curr.text + ' ';
+          curCell += curr.text + ' ';
+          fullStr += curr.text + ' ';
         }
-        cells.push(currentCell.trim());
+        cells.push(curCell.trim());
 
-        const maxHeight = Math.max(...line.items.map(it => it.height));
-        const isHeader = maxHeight > 15; // Cỡ chữ lớn -> Tiêu đề
-
+        const maxHeight = Math.max(...l.items.map(it => it.height));
         return {
-          text: fullLineText.trim(),
-          isHeader: isHeader,
-          isTableCandidate: isTableCandidate && cells.length > 1,
+          text: fullStr.trim(),
+          isHeader: maxHeight > 14,
+          isTable: cells.length > 1,
           cells: cells.filter(c => c !== '')
         };
       });
     }
 
-    // 3. Xử lý Ảnh bằng Tesseract OCR lấy cấu trúc Dòng
-    async function processImageStructured(file, lang) {
-      updateProgress('Đang chạy OCR nhận diện cấu trúc...', 0.2);
-      const lines = await processImageWithTesseract(file, lang);
-      extractedStructuredData.push({ page: 1, lines: lines });
+    async function processImage(file, lang) {
+      updateProgress('Đang quét OCR...', 0.2);
+      const lines = await runTesseract(file, lang);
+      rawStructuredLines.push(...lines);
     }
 
-    async function processImageWithTesseract(imageSource, lang) {
-      const worker = await Tesseract.createWorker(lang, 1, {
-        logger: m => {
-          if (m.status === 'recognizing text') {
-            updateProgress(`Đang xử lý OCR...`, m.progress);
-          }
-        }
-      });
-      
-      const res = await worker.recognize(imageSource);
+    async function runTesseract(source, lang) {
+      const worker = await Tesseract.createWorker(lang, 1);
+      const res = await worker.recognize(source);
       await worker.terminate();
 
-      const lines = res.data.lines.map(line => {
-        const text = line.text.trim();
-        const parts = text.split(/\s{3,}|\t/); // Phân tách theo Tab hoặc khoảng trắng đệm dài
+      return res.data.lines.map(l => {
+        const text = l.text.trim();
+        const parts = text.split(/\s{3,}|\t/);
         return {
           text: text,
-          isHeader: line.baseline && Math.abs(line.bbox.y1 - line.bbox.y0) > 22,
-          isTableCandidate: parts.length > 1,
+          isHeader: lineIsHeader(l),
+          isTable: parts.length > 1,
           cells: parts
         };
       });
-
-      return lines;
     }
 
-    // 4. Hiển thị kết quả lên Editor Quill với HTML định dạng chuẩn
-    function renderToEditor() {
-      let htmlContent = '';
+    function lineIsHeader(line) {
+      return line.baseline && Math.abs(line.bbox.y1 - line.bbox.y0) > 20;
+    }
 
-      extractedStructuredData.forEach(pageData => {
-        if (extractedStructuredData.length > 1) {
-          htmlContent += `<p><strong>--- Trang ${pageData.page} ---</strong></p>`;
-        }
+    function renderFormattedContent() {
+      let html = '';
+      let inTable = false;
 
-        pageData.lines.forEach(line => {
-          if (!line.text) return;
+      rawStructuredLines.forEach(line => {
+        if (!line.text) return;
 
-          if (line.isHeader) {
-            htmlContent += `<h2><strong>${escapeHtml(line.text)}</strong></h2>`;
-          } else if (line.isTableCandidate && line.cells.length > 1) {
-            const formattedRow = line.cells.map(c => escapeHtml(c)).join(' &nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp; ');
-            htmlContent += `<p><code>${formattedRow}</code></p>`;
-          } else {
-            htmlContent += `<p>${escapeHtml(line.text)}</p>`;
+        if (line.isTable && line.cells.length > 1) {
+          if (!inTable) {
+            html += '<table class="ocr-table"><tbody>';
+            inTable = true;
           }
-        });
-        htmlContent += '<p><br></p>';
+          html += '<tr>' + line.cells.map(c => `<td>${escapeHtml(c)}</td>`).join('') + '</tr>';
+        } else {
+          if (inTable) {
+            html += '</tbody></table>';
+            inTable = false;
+          }
+          if (line.isHeader) {
+            html += `<h2><strong>${escapeHtml(line.text)}</strong></h2>`;
+          } else {
+            html += `<p>${escapeHtml(line.text)}</p>`;
+          }
+        }
       });
 
-      quill.clipboard.dangerouslyPasteHTML(htmlContent);
+      if (inTable) html += '</tbody></table>';
+
+      quill.clipboard.dangerouslyPasteHTML(html);
     }
 
     function escapeHtml(str) {
       return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 
-    // 5. Tải File Word (.DOCX)
-    downloadDocxBtn.addEventListener('click', async () => {
-      const docParagraphs = [];
+    // Tải file DOCX (Giữ nguyên Bảng, Font chữ và Tiêu đề như hiển thị)
+    downloadDocxBtn.addEventListener('click', () => {
+      const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <style>
+            body { font-family: 'Times New Roman', serif; font-size: 12pt; line-height: 1.3; }
+            h2 { font-size: 16pt; font-weight: bold; color: #1e293b; }
+            table { border-collapse: collapse; width: 100%; margin-top: 10px; margin-bottom: 10px; }
+            td, th { border: 1px solid #000; padding: 5px 8px; font-size: 11pt; }
+          </style>
+        </head>
+        <body>
+          ${quill.root.innerHTML}
+        </body>
+        </html>
+      `;
 
-      extractedStructuredData.forEach(pageData => {
-        if (extractedStructuredData.length > 1) {
-          docParagraphs.push(
-            new docx.Paragraph({
-              children: [new docx.TextRun({ text: `--- Trang ${pageData.page} ---`, bold: true, color: "2563EB" })],
-              spaceAfter: 200
-            })
-          );
-        }
-
-        pageData.lines.forEach(line => {
-          if (!line.text) return;
-
-          if (line.isHeader) {
-            docParagraphs.push(
-              new docx.Paragraph({
-                text: line.text,
-                heading: docx.HeadingLevel.HEADING_2,
-                spaceBefore: 240,
-                spaceAfter: 120
-              })
-            );
-          } else if (line.isTableCandidate && line.cells.length > 1) {
-            const cellRuns = line.cells.map(c => new docx.TextRun({ text: c + "  \t  ", bold: false }));
-            docParagraphs.push(
-              new docx.Paragraph({
-                children: cellRuns,
-                spaceAfter: 80
-              })
-            );
-          } else {
-            docParagraphs.push(
-              new docx.Paragraph({
-                children: [new docx.TextRun(line.text)],
-                spaceAfter: 100
-              })
-            );
-          }
-        });
-      });
-
-      const doc = new docx.Document({
-        sections: [{
-          properties: {},
-          children: docParagraphs
-        }]
-      });
-
-      const blob = await docx.Packer.toBlob(doc);
-      saveBlob(blob, `VanBan-Chuandinhdang-${Date.now()}.docx`);
+      const converted = htmlDocx.asBlob(htmlContent);
+      saveBlob(converted, `VanBan-DinhDang-${Date.now()}.docx`);
     });
 
-    // 6. Tải File Excel (.XLSX)
+    // Tải file XLSX (Tự động bóc tách từng cột vào ô Excel)
     downloadXlsxBtn.addEventListener('click', () => {
-      const excelRows = [];
-
-      extractedStructuredData.forEach(pageData => {
-        pageData.lines.forEach(line => {
-          if (!line.text) return;
-
-          if (line.isTableCandidate && line.cells.length > 1) {
-            excelRows.push(line.cells);
-          } else {
-            excelRows.push([line.text]);
-          }
-        });
+      const rows = [];
+      rawStructuredLines.forEach(l => {
+        if (l.isTable && l.cells.length > 1) {
+          rows.push(l.cells);
+        } else if (l.text) {
+          rows.push([l.text]);
+        }
       });
 
-      const worksheet = XLSX.utils.aoa_to_sheet(excelRows);
-      
-      const colWidths = [];
-      excelRows.forEach(row => {
-        row.forEach((cell, colIdx) => {
-          const len = cell ? cell.toString().length : 10;
-          colWidths[colIdx] = Math.max(colWidths[colIdx] || 10, len + 3);
-        });
-      });
-      worksheet['!cols'] = colWidths.map(w => ({ wch: w }));
-
+      const worksheet = XLSX.utils.aoa_to_sheet(rows);
       const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'KetQua_DinhDang');
-      XLSX.writeFile(workbook, `BangData-Chuandinhdang-${Date.now()}.xlsx`);
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'DuLieu');
+      XLSX.writeFile(workbook, `DuLieu-Excel-${Date.now()}.xlsx`);
     });
 
-    // 7. Tải File Text (.TXT)
     downloadTxtBtn.addEventListener('click', () => {
-      const text = quill.getText();
-      saveBlob(new Blob([text], { type: 'text/plain;charset=utf-8' }), `VanBan-${Date.now()}.txt`);
+      saveBlob(new Blob([quill.getText()], { type: 'text/plain;charset=utf-8' }), `VanBan-${Date.now()}.txt`);
     });
 
     function saveBlob(blob, filename) {
