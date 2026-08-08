@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chuyển đổi PDF & Ảnh thành Text (OCR)</title>
+  
+  <!-- Tailwind CSS cho giao diện -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- PDF.js library -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <!-- Tesseract.js library (OCR) -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
+  <style>
+    .drop-zone--over { border-color: #3b82f6; background-color: #eff6ff; }
+  </style>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-800 p-4 md:p-8">
+  <div class="max-w-4xl mx-auto space-y-6">
+    
+    <!-- Header -->
+    <header class="text-center space-y-2">
+      <h1 class="text-3xl md:text-4xl font-bold text-slate-900">Trích Xuất Text Từ PDF & Ảnh</h1>
+      <p class="text-slate-600">Kéo thả tệp PDF hoặc Image để chuyển đổi thành văn bản tiếng Việt/Anh</p>
+    </header>
+
+    <!-- Upload Area -->
+    <div id="dropZone" class="border-2 border-dashed border-slate-300 rounded-2xl p-8 text-center bg-white shadow-sm hover:border-slate-400 transition cursor-pointer">
+      <input type="file" id="fileInput" accept="image/*,application/pdf" class="hidden" />
+      <div class="space-y-4">
+        <div class="flex justify-center">
+          <svg class="w-12 h-12 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+          </svg>
+        </div>
+        <div>
+          <p class="text-lg font-medium">Kéo thả tệp PDF hoặc Ảnh vào đây</p>
+          <p class="text-sm text-slate-500 mt-1">Hoặc nhấp để chọn tệp từ máy tính</p>
+        </div>
+        <p id="fileName" class="text-sm font-semibold text-blue-600 hidden"></p>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="flex flex-wrap items-center justify-between gap-4 bg-white p-4 rounded-xl shadow-sm">
+      <div class="flex items-center space-x-2">
+        <label for="language" class="text-sm font-medium">Ngôn ngữ OCR:</label>
+        <select id="language" class="border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <option value="vie+eng" selected>Tiếng Việt + Tiếng Anh</option>
+          <option value="vie">Chỉ Tiếng Việt</option>
+          <option value="eng">Chỉ Tiếng Anh</option>
+        </select>
+      </div>
+
+      <button id="convertBtn" disabled class="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-medium px-6 py-2.5 rounded-lg transition shadow-sm">
+        Chuyển đổi thành Text
+      </button>
+    </div>
+
+    <!-- Progress Status -->
+    <div id="statusContainer" class="hidden space-y-2">
+      <div class="flex justify-between text-sm font-medium">
+        <span id="statusText">Đang xử lý...</span>
+        <span id="progressPercent">0%</span>
+      </div>
+      <div class="w-full bg-slate-200 rounded-full h-2.5">
+        <div id="progressBar" class="bg-blue-600 h-2.5 rounded-full w-0 transition-all duration-300"></div>
+      </div>
+    </div>
+
+    <!-- Output Area -->
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+      <div class="flex justify-between items-center px-4 py-3 bg-slate-100 border-b border-slate-200">
+        <span class="font-medium text-sm">Kết quả văn bản</span>
+        <button id="downloadBtn" disabled class="bg-slate-800 hover:bg-slate-900 disabled:bg-slate-300 text-white text-sm px-4 py-1.5 rounded-lg transition">
+          Tải file .txt
+        </button>
+      </div>
+      <textarea id="outputText" rows="12" placeholder="Văn bản trích xuất sẽ hiển thị tại đây..." class="w-full p-4 focus:outline-none resize-y text-slate-700 font-mono text-sm" readonly></textarea>
+    </div>
+
+  </div>
+
+  <script>
+    // Cấu hình PDF.js worker
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const fileName = document.getElementById('fileName');
+    const convertBtn = document.getElementById('convertBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const outputText = document.getElementById('outputText');
+    const statusContainer = document.getElementById('statusContainer');
+    const statusText = document.getElementById('statusText');
+    const progressBar = document.getElementById('progressBar');
+    const progressPercent = document.getElementById('progressPercent');
+    const languageSelect = document.getElementById('language');
+
+    let selectedFile = null;
+
+    // Xử lý sự kiện Drag & Drop
+    ['dragenter', 'dragover'].forEach(eventName => {
+      dropZone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        dropZone.classList.add('drop-zone--over');
+      }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+      dropZone.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('drop-zone--over');
+      }, false);
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+      const dt = e.dataTransfer;
+      if (dt.files && dt.files[0]) handleFileSelect(dt.files[0]);
+    });
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files[0]) handleFileSelect(e.target.files[0]);
+    });
+
+    function handleFileSelect(file) {
+      selectedFile = file;
+      fileName.textContent = `Tệp đã chọn: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`;
+      fileName.classList.remove('hidden');
+      convertBtn.disabled = false;
+      outputText.value = '';
+      downloadBtn.disabled = true;
+    }
+
+    // Cập nhật thanh tiến trình UI
+    function updateProgress(message, ratio) {
+      statusContainer.classList.remove('hidden');
+      statusText.textContent = message;
+      const pct = Math.round(ratio * 100);
+      progressBar.style.width = `${pct}%`;
+      progressPercent.textContent = `${pct}%`;
+    }
+
+    // Xử lý nút Chuyển đổi
+    convertBtn.addEventListener('click', async () => {
+      if (!selectedFile) return;
+
+      convertBtn.disabled = true;
+      downloadBtn.disabled = true;
+      outputText.value = '';
+      updateProgress('Đang khởi tạo...', 0.05);
+
+      try {
+        let extractedText = '';
+        const lang = languageSelect.value;
+
+        if (selectedFile.type === 'application/pdf') {
+          extractedText = await processPdf(selectedFile, lang);
+        } else if (selectedFile.type.startsWith('image/')) {
+          extractedText = await processImage(selectedFile, lang);
+        }
+
+        outputText.value = extractedText.trim() || 'Không tìm thấy văn bản nào.';
+        outputText.removeAttribute('readonly');
+        downloadBtn.disabled = false;
+        updateProgress('Hoàn thành!', 1);
+      } catch (err) {
+        console.error(err);
+        alert('Đã xảy ra lỗi trong quá trình xử lý: ' + err.message);
+        updateProgress('Thất bại', 0);
+      } finally {
+        convertBtn.disabled = false;
+      }
+    });
+
+    // Xử lý ảnh bằng Tesseract.js
+    async function processImage(imageSource, lang) {
+      const worker = await Tesseract.createWorker(lang, 1, {
+        logger: m => {
+          if (m.status === 'recognizing text') {
+            updateProgress(`Đang nhận diện chữ trong ảnh...`, m.progress);
+          }
+        }
+      });
+      const ret = await worker.recognize(imageSource);
+      await worker.terminate();
+      return ret.data.text;
+    }
+
+    // Xử lý PDF (Trích xuất văn bản trực tiếp hoặc chạy OCR từng trang)
+    async function processPdf(file, lang) {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let fullText = '';
+
+      for (let i = 1; i <= pdf.numPages; i++) {
+        updateProgress(`Đang xử lý trang ${i}/${pdf.numPages}...`, (i - 1) / pdf.numPages);
+        const page = await pdf.getPage(i);
+        
+        // Thử trích xuất text có sẵn trong PDF
+        const textContent = await page.getTextContent();
+        let pageText = textContent.items.map(item => item.str).join(' ');
+
+        // Nếu trang PDF không chứa text (dạng scan), chuyển thành Canvas để chạy OCR
+        if (!pageText.trim()) {
+          updateProgress(`Chạy OCR cho trang scan ${i}/${pdf.numPages}...`, (i - 0.5) / pdf.numPages);
+          const viewport = page.getViewport({ scale: 2.0 });
+          const canvas = document.createElement('canvas');
+          const context = canvas.getContext('2d');
+          canvas.height = viewport.height;
+          canvas.width = viewport.width;
+
+          await page.render({ canvasContext: context, viewport: viewport }).promise;
+          pageText = await processImage(canvas, lang);
+        }
+
+        fullText += `--- Trang ${i} ---\n` + pageText + '\n\n';
+      }
+
+      return fullText;
+    }
+
+    // Tải xuống file Text
+    downloadBtn.addEventListener('click', () => {
+      const blob = new Blob([outputText.value], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `converted-${Date.now()}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
+  </script>
+</body>
+</html>
