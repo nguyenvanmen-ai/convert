@@ -3,14 +3,18 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Chuyển đổi PDF & Ảnh thành Text (OCR)</title>
+  <title>Chuyển đổi PDF & Ảnh thành Text, Docx, Excel (OCR)</title>
   
-  <!-- Tailwind CSS cho giao diện -->
+  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- PDF.js library -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <!-- Tesseract.js library (OCR) -->
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <!-- docx.js (Xuất file .docx) -->
+  <script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.min.js"></script>
+  <!-- SheetJS / xlsx (Xuất file .xlsx) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
   <style>
     .drop-zone--over { border-color: #3b82f6; background-color: #eff6ff; }
@@ -21,8 +25,8 @@
     
     <!-- Header -->
     <header class="text-center space-y-2">
-      <h1 class="text-3xl md:text-4xl font-bold text-slate-900">Trích Xuất Text Từ PDF & Ảnh</h1>
-      <p class="text-slate-600">Kéo thả tệp PDF hoặc Image để chuyển đổi thành văn bản tiếng Việt/Anh</p>
+      <h1 class="text-3xl md:text-4xl font-bold text-slate-900">Trích Xuất Text & Xuất DOCX / XLSX</h1>
+      <p class="text-slate-600">Kéo thả tệp PDF/Ảnh để trích xuất văn bản và tải về định dạng TXT, Word hoặc Excel</p>
     </header>
 
     <!-- Upload Area -->
@@ -43,7 +47,7 @@
     </div>
 
     <!-- Controls -->
-    <div class="flex flex-wrap items-center justify-between gap-4 bg-white p-4 rounded-xl shadow-sm">
+    <div class="flex flex-wrap items-center justify-between gap-4 bg-white p-4 rounded-xl shadow-sm border border-slate-200">
       <div class="flex items-center space-x-2">
         <label for="language" class="text-sm font-medium">Ngôn ngữ OCR:</label>
         <select id="language" class="border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
@@ -54,7 +58,7 @@
       </div>
 
       <button id="convertBtn" disabled class="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-medium px-6 py-2.5 rounded-lg transition shadow-sm">
-        Chuyển đổi thành Text
+        Chuyển đổi văn bản
       </button>
     </div>
 
@@ -71,11 +75,21 @@
 
     <!-- Output Area -->
     <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-      <div class="flex justify-between items-center px-4 py-3 bg-slate-100 border-b border-slate-200">
+      <div class="flex flex-wrap justify-between items-center px-4 py-3 bg-slate-100 border-b border-slate-200 gap-2">
         <span class="font-medium text-sm">Kết quả văn bản</span>
-        <button id="downloadBtn" disabled class="bg-slate-800 hover:bg-slate-900 disabled:bg-slate-300 text-white text-sm px-4 py-1.5 rounded-lg transition">
-          Tải file .txt
-        </button>
+        
+        <!-- Nút tải file các định dạng -->
+        <div class="flex items-center space-x-2">
+          <button id="downloadTxtBtn" disabled class="bg-slate-700 hover:bg-slate-800 disabled:bg-slate-300 text-white text-sm px-3 py-1.5 rounded-lg transition">
+            Tải .TXT
+          </button>
+          <button id="downloadDocxBtn" disabled class="bg-blue-700 hover:bg-blue-800 disabled:bg-slate-300 text-white text-sm px-3 py-1.5 rounded-lg transition">
+            Tải .DOCX
+          </button>
+          <button id="downloadXlsxBtn" disabled class="bg-emerald-700 hover:bg-emerald-800 disabled:bg-slate-300 text-white text-sm px-3 py-1.5 rounded-lg transition">
+            Tải .XLSX
+          </button>
+        </div>
       </div>
       <textarea id="outputText" rows="12" placeholder="Văn bản trích xuất sẽ hiển thị tại đây..." class="w-full p-4 focus:outline-none resize-y text-slate-700 font-mono text-sm" readonly></textarea>
     </div>
@@ -90,7 +104,11 @@
     const fileInput = document.getElementById('fileInput');
     const fileName = document.getElementById('fileName');
     const convertBtn = document.getElementById('convertBtn');
-    const downloadBtn = document.getElementById('downloadBtn');
+    
+    const downloadTxtBtn = document.getElementById('downloadTxtBtn');
+    const downloadDocxBtn = document.getElementById('downloadDocxBtn');
+    const downloadXlsxBtn = document.getElementById('downloadXlsxBtn');
+    
     const outputText = document.getElementById('outputText');
     const statusContainer = document.getElementById('statusContainer');
     const statusText = document.getElementById('statusText');
@@ -131,7 +149,13 @@
       fileName.classList.remove('hidden');
       convertBtn.disabled = false;
       outputText.value = '';
-      downloadBtn.disabled = true;
+      setDownloadButtonsState(true);
+    }
+
+    function setDownloadButtonsState(disabled) {
+      downloadTxtBtn.disabled = disabled;
+      downloadDocxBtn.disabled = disabled;
+      downloadXlsxBtn.disabled = disabled;
     }
 
     // Cập nhật thanh tiến trình UI
@@ -148,7 +172,7 @@
       if (!selectedFile) return;
 
       convertBtn.disabled = true;
-      downloadBtn.disabled = true;
+      setDownloadButtonsState(true);
       outputText.value = '';
       updateProgress('Đang khởi tạo...', 0.05);
 
@@ -164,7 +188,7 @@
 
         outputText.value = extractedText.trim() || 'Không tìm thấy văn bản nào.';
         outputText.removeAttribute('readonly');
-        downloadBtn.disabled = false;
+        setDownloadButtonsState(false);
         updateProgress('Hoàn thành!', 1);
       } catch (err) {
         console.error(err);
@@ -189,7 +213,7 @@
       return ret.data.text;
     }
 
-    // Xử lý PDF (Trích xuất văn bản trực tiếp hoặc chạy OCR từng trang)
+    // Xử lý PDF
     async function processPdf(file, lang) {
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -199,11 +223,9 @@
         updateProgress(`Đang xử lý trang ${i}/${pdf.numPages}...`, (i - 1) / pdf.numPages);
         const page = await pdf.getPage(i);
         
-        // Thử trích xuất text có sẵn trong PDF
         const textContent = await page.getTextContent();
         let pageText = textContent.items.map(item => item.str).join(' ');
 
-        // Nếu trang PDF không chứa text (dạng scan), chuyển thành Canvas để chạy OCR
         if (!pageText.trim()) {
           updateProgress(`Chạy OCR cho trang scan ${i}/${pdf.numPages}...`, (i - 0.5) / pdf.numPages);
           const viewport = page.getViewport({ scale: 2.0 });
@@ -222,18 +244,52 @@
       return fullText;
     }
 
-    // Tải xuống file Text
-    downloadBtn.addEventListener('click', () => {
-      const blob = new Blob([outputText.value], { type: 'text/plain;charset=utf-8' });
+    // Tải xuống file .TXT
+    downloadTxtBtn.addEventListener('click', () => {
+      saveBlob(new Blob([outputText.value], { type: 'text/plain;charset=utf-8' }), `converted-${Date.now()}.txt`);
+    });
+
+    // Tải xuống file .DOCX
+    downloadDocxBtn.addEventListener('click', async () => {
+      const lines = outputText.value.split('\n');
+      const paragraphs = lines.map(line => 
+        new docx.Paragraph({
+          children: [new docx.TextRun(line)]
+        })
+      );
+
+      const doc = new docx.Document({
+        sections: [{ properties: {}, children: paragraphs }]
+      });
+
+      const blob = await docx.Packer.toBlob(doc);
+      saveBlob(blob, `converted-${Date.now()}.docx`);
+    });
+
+    // Tải xuống file .XLSX
+    downloadXlsxBtn.addEventListener('click', () => {
+      const lines = outputText.value.split('\n');
+      // Mỗi dòng văn bản sẽ nằm ở một hàng trong Excel
+      const sheetData = lines.map(line => [line]);
+
+      const worksheet = XLSX.utils.aoa_to_sheet(sheetData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Két quả OCR');
+
+      XLSX.writeFile(workbook, `converted-${Date.now()}.xlsx`);
+    });
+
+    // Hàm phụ trợ hỗ trợ tải file
+    function saveBlob(blob, filename) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `converted-${Date.now()}.txt`;
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-    });
+    }
   </script>
 </body>
 </html>
