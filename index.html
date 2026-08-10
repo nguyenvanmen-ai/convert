@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Trích Xuất & Tải File Giữ Định Dạng Chuẩn</title>
-  
+
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- PDF.js -->
@@ -13,8 +13,8 @@
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <!-- SheetJS cho Excel -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <!-- html-docx-js cho phép chuyển HTML trực tiếp sang Word giữ chuẩn CSS/Bố cục -->
-  <script src="https://cdn.jsdelivr.net/npm/html-docx-js@0.3.1/dist/html-docx.min.js"></script>
+  <!-- docx.js: tạo file Word CHUẨN OOXML thật sự (thay cho html-docx-js hay bể khung / lỗi font) -->
+  <script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.js"></script>
   <!-- Quill Editor -->
   <link href="https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.snow.css" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.js"></script>
@@ -22,21 +22,18 @@
   <style>
     .drop-zone--over { border-color: #2563eb; background-color: #eff6ff; }
     .ql-editor { min-height: 380px; font-family: 'Times New Roman', Times, serif; font-size: 16px; line-height: 1.5; }
-    /* Định dạng xem trước dạng bảng */
     .ocr-table { border-collapse: collapse; width: 100%; margin: 10px 0; }
     .ocr-table td, .ocr-table th { border: 1px solid #cbd5e1; padding: 6px 10px; }
   </style>
 </head>
 <body class="bg-slate-50 min-h-screen text-slate-800 p-4 md:p-8">
   <div class="max-w-5xl mx-auto space-y-6">
-    
-    <!-- Header -->
+
     <header class="text-center space-y-2">
       <h1 class="text-3xl md:text-4xl font-bold text-slate-900">Xử Lý & Xuất File Word/Excel Chuẩn Định Dạng</h1>
       <p class="text-slate-600">Trích xuất văn bản từ PDF/Ảnh, tự động tạo cấu trúc Đoạn, Bảng và Tiêu đề</p>
     </header>
 
-    <!-- Upload Area -->
     <div id="dropZone" class="border-2 border-dashed border-slate-300 rounded-2xl p-8 text-center bg-white shadow-sm hover:border-blue-400 transition cursor-pointer">
       <input type="file" id="fileInput" accept="image/*,application/pdf" class="hidden" />
       <div class="space-y-4">
@@ -53,7 +50,6 @@
       </div>
     </div>
 
-    <!-- Controls -->
     <div class="flex flex-wrap items-center justify-between gap-4 bg-white p-4 rounded-xl shadow-sm border border-slate-200">
       <div class="flex items-center space-x-3">
         <label for="language" class="text-sm font-medium">Ngôn ngữ OCR:</label>
@@ -69,7 +65,6 @@
       </button>
     </div>
 
-    <!-- Progress Status -->
     <div id="statusContainer" class="hidden space-y-2">
       <div class="flex justify-between text-sm font-medium">
         <span id="statusText">Đang xử lý...</span>
@@ -80,12 +75,10 @@
       </div>
     </div>
 
-    <!-- Editor & Output Area -->
     <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden space-y-0">
       <div class="flex flex-wrap justify-between items-center px-4 py-3 bg-slate-100 border-b border-slate-200 gap-2">
         <span class="font-medium text-sm text-slate-700">Xem trước định dạng (Có thể chỉnh sửa trực tiếp)</span>
-        
-        <!-- Nút tải file -->
+
         <div class="flex items-center space-x-2">
           <button id="downloadDocxBtn" disabled class="bg-blue-700 hover:bg-blue-800 disabled:bg-slate-300 text-white text-sm font-medium px-4 py-1.5 rounded-lg transition">
             Tải Word (.DOCX)
@@ -98,7 +91,7 @@
           </button>
         </div>
       </div>
-      
+
       <div id="editor"></div>
     </div>
 
@@ -125,11 +118,11 @@
     const fileInput = document.getElementById('fileInput');
     const fileName = document.getElementById('fileName');
     const convertBtn = document.getElementById('convertBtn');
-    
+
     const downloadTxtBtn = document.getElementById('downloadTxtBtn');
     const downloadDocxBtn = document.getElementById('downloadDocxBtn');
     const downloadXlsxBtn = document.getElementById('downloadXlsxBtn');
-    
+
     const statusContainer = document.getElementById('statusContainer');
     const statusText = document.getElementById('statusText');
     const progressBar = document.getElementById('progressBar');
@@ -139,7 +132,7 @@
     let selectedFile = null;
     let rawStructuredLines = [];
 
-    // Drag & drop handlers
+    // ---------- Drag & drop ----------
     ['dragenter', 'dragover'].forEach(eName => {
       dropZone.addEventListener(eName, (e) => { e.preventDefault(); dropZone.classList.add('drop-zone--over'); });
     });
@@ -192,6 +185,10 @@
         } else {
           await processImage(selectedFile, lang);
         }
+
+        classifyHeaders(rawStructuredLines);
+        smoothTableDetection(rawStructuredLines);
+
         renderFormattedContent();
         setDownloadButtonsState(false);
         updateProgress('Hoàn thành!', 1);
@@ -204,6 +201,7 @@
       }
     });
 
+    // ---------- Trích xuất PDF ----------
     async function processPdf(file, lang) {
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -271,7 +269,8 @@
         const maxHeight = Math.max(...l.items.map(it => it.height));
         return {
           text: fullStr.trim(),
-          isHeader: maxHeight > 14,
+          rawHeight: maxHeight,     // dùng để phân loại tiêu đề sau (theo median toàn văn bản)
+          isHeader: false,
           isTable: cells.length > 1,
           cells: cells.filter(c => c !== '')
         };
@@ -292,17 +291,39 @@
       return res.data.lines.map(l => {
         const text = l.text.trim();
         const parts = text.split(/\s{3,}|\t/);
+        const h = l.bbox ? Math.abs(l.bbox.y1 - l.bbox.y0) : 12;
         return {
           text: text,
-          isHeader: lineIsHeader(l),
+          rawHeight: h,
+          isHeader: false,
           isTable: parts.length > 1,
           cells: parts
         };
       });
     }
 
-    function lineIsHeader(line) {
-      return line.baseline && Math.abs(line.bbox.y1 - line.bbox.y0) > 20;
+    // ---------- Phân loại tiêu đề dựa trên chiều cao trung vị (tránh nhận nhầm hàng loạt) ----------
+    function classifyHeaders(lines) {
+      const heights = lines.map(l => l.rawHeight).filter(h => h > 0).sort((a, b) => a - b);
+      if (heights.length === 0) return;
+      const median = heights[Math.floor(heights.length / 2)];
+      lines.forEach(l => {
+        l.isHeader = l.rawHeight > median * 1.3 && l.text.length < 120;
+      });
+    }
+
+    // ---------- Làm mượt phát hiện bảng: chỉ giữ là bảng nếu có ít nhất 2 dòng liên tiếp giống cấu trúc cột ----------
+    function smoothTableDetection(lines) {
+      for (let i = 0; i < lines.length; i++) {
+        if (!lines[i].isTable) continue;
+        const prevOk = i > 0 && lines[i - 1].isTable;
+        const nextOk = i < lines.length - 1 && lines[i + 1].isTable;
+        if (!prevOk && !nextOk) {
+          lines[i].isTable = false;
+          lines[i].cells = [lines[i].text];
+        }
+      }
+      return lines;
     }
 
     function renderFormattedContent() {
@@ -340,31 +361,187 @@
       return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     }
 
-    // Tải file DOCX (Giữ nguyên Bảng, Font chữ và Tiêu đề như hiển thị)
-    downloadDocxBtn.addEventListener('click', () => {
-      const htmlContent = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset="utf-8">
-          <style>
-            body { font-family: 'Times New Roman', serif; font-size: 12pt; line-height: 1.3; }
-            h2 { font-size: 16pt; font-weight: bold; color: #1e293b; }
-            table { border-collapse: collapse; width: 100%; margin-top: 10px; margin-bottom: 10px; }
-            td, th { border: 1px solid #000; padding: 5px 8px; font-size: 11pt; }
-          </style>
-        </head>
-        <body>
-          ${quill.root.innerHTML}
-        </body>
-        </html>
-      `;
+    // =========================================================================
+    // TẢI FILE DOCX — dùng thư viện docx.js để dựng file .docx CHUẨN OOXML thật sự.
+    // Cách này thay thế html-docx-js (vốn chỉ nhúng HTML vào khung MHTML, dễ vỡ
+    // bảng và lỗi hiển thị font trong Word). Ở đây mỗi đoạn văn / tiêu đề / bảng
+    // được dựng thành đối tượng Paragraph/Table thật của Word, và font được gán
+    // rõ ràng (Times New Roman) cho từng run văn bản nên không bị lỗi font.
+    // =========================================================================
+    downloadDocxBtn.addEventListener('click', async () => {
+      downloadDocxBtn.disabled = true;
+      const originalLabel = downloadDocxBtn.textContent;
+      downloadDocxBtn.textContent = 'Đang tạo file...';
+      try {
+        const blocks = elementToDocxBlocks(quill.root);
 
-      const converted = htmlDocx.asBlob(htmlContent);
-      saveBlob(converted, `VanBan-DinhDang-${Date.now()}.docx`);
+        const doc = new docx.Document({
+          styles: {
+            default: {
+              document: {
+                run: { font: 'Times New Roman', size: 24 } // 12pt
+              }
+            }
+          },
+          sections: [{
+            properties: {
+              page: { margin: { top: 1134, bottom: 1134, left: 1134, right: 1134 } } // ~2cm lề
+            },
+            children: blocks.length ? blocks : [new docx.Paragraph({ children: [new docx.TextRun('')] })]
+          }]
+        });
+
+        const blob = await docx.Packer.toBlob(doc);
+        saveBlob(blob, `VanBan-DinhDang-${Date.now()}.docx`);
+      } catch (err) {
+        console.error(err);
+        alert('Lỗi khi tạo file Word: ' + err.message);
+      } finally {
+        downloadDocxBtn.disabled = false;
+        downloadDocxBtn.textContent = originalLabel;
+      }
     });
 
-    // Tải file XLSX (Tự động bóc tách từng cột vào ô Excel)
+    // Duyệt cây DOM của Quill (h1/h2/h3, p, ul/ol, table) và dựng thành các block docx.js
+    function elementToDocxBlocks(rootEl) {
+      const blocks = [];
+
+      Array.from(rootEl.childNodes).forEach(node => {
+        if (node.nodeType !== Node.ELEMENT_NODE) return;
+        const tag = node.tagName.toLowerCase();
+
+        if (tag === 'h1' || tag === 'h2' || tag === 'h3') {
+          const sizeMap = { h1: 32, h2: 28, h3: 26 }; // half-points: 16pt/14pt/13pt
+          const size = sizeMap[tag];
+          const runs = parseInlineRuns(node, { bold: true, size });
+          blocks.push(new docx.Paragraph({
+            children: runs.length ? runs : [new docx.TextRun({ text: node.textContent, bold: true, size, font: 'Times New Roman' })],
+            spacing: { before: 240, after: 120 },
+            alignment: getAlignment(node)
+          }));
+
+        } else if (tag === 'p') {
+          const runs = parseInlineRuns(node, {});
+          blocks.push(new docx.Paragraph({
+            children: runs.length ? runs : [new docx.TextRun({ text: '', font: 'Times New Roman', size: 24 })],
+            spacing: { after: 120 },
+            alignment: getAlignment(node)
+          }));
+
+        } else if (tag === 'ul' || tag === 'ol') {
+          let idx = 1;
+          node.querySelectorAll(':scope > li').forEach(li => {
+            const prefix = tag === 'ol' ? `${idx}. ` : '•  ';
+            idx++;
+            const runs = parseInlineRuns(li, {});
+            blocks.push(new docx.Paragraph({
+              children: [new docx.TextRun({ text: prefix, font: 'Times New Roman', size: 24 }), ...runs],
+              indent: { left: 420 },
+              spacing: { after: 80 }
+            }));
+          });
+
+        } else if (tag === 'table') {
+          const trList = Array.from(node.querySelectorAll(':scope > tbody > tr, :scope > tr'));
+          if (trList.length === 0) return;
+
+          const numCols = Math.max(...trList.map(tr => tr.querySelectorAll('td,th').length), 1);
+          const colWidthPct = Math.floor(100 / numCols);
+
+          const rows = trList.map(tr => {
+            const cellsEls = Array.from(tr.querySelectorAll('td,th'));
+            const cells = cellsEls.map(td => {
+              const runs = parseInlineRuns(td, { size: 22 });
+              return new docx.TableCell({
+                width: { size: colWidthPct, type: docx.WidthType.PERCENTAGE },
+                margins: { top: 80, bottom: 80, left: 100, right: 100 },
+                children: [new docx.Paragraph({
+                  children: runs.length ? runs : [new docx.TextRun({ text: '', font: 'Times New Roman', size: 22 })]
+                })]
+              });
+            });
+            // Đảm bảo mọi hàng có cùng số cột để bảng không bị lệch khung
+            while (cells.length < numCols) {
+              cells.push(new docx.TableCell({
+                width: { size: colWidthPct, type: docx.WidthType.PERCENTAGE },
+                children: [new docx.Paragraph({ children: [new docx.TextRun({ text: '', font: 'Times New Roman', size: 22 })] })]
+              }));
+            }
+            return new docx.TableRow({ children: cells });
+          });
+
+          blocks.push(new docx.Table({
+            rows,
+            width: { size: 100, type: docx.WidthType.PERCENTAGE },
+            borders: {
+              top: { style: docx.BorderStyle.SINGLE, size: 4, color: '999999' },
+              bottom: { style: docx.BorderStyle.SINGLE, size: 4, color: '999999' },
+              left: { style: docx.BorderStyle.SINGLE, size: 4, color: '999999' },
+              right: { style: docx.BorderStyle.SINGLE, size: 4, color: '999999' },
+              insideHorizontal: { style: docx.BorderStyle.SINGLE, size: 4, color: '999999' },
+              insideVertical: { style: docx.BorderStyle.SINGLE, size: 4, color: '999999' }
+            }
+          }));
+          // khoảng cách sau bảng
+          blocks.push(new docx.Paragraph({ children: [new docx.TextRun({ text: '', size: 12 })] }));
+
+        } else {
+          const text = node.textContent.trim();
+          if (text) {
+            blocks.push(new docx.Paragraph({
+              children: [new docx.TextRun({ text, font: 'Times New Roman', size: 24 })],
+              spacing: { after: 120 }
+            }));
+          }
+        }
+      });
+
+      return blocks;
+    }
+
+    // Duyệt đệ quy các node con để giữ định dạng in đậm/nghiêng/gạch chân
+    function parseInlineRuns(node, fmt) {
+      let runs = [];
+      node.childNodes.forEach(child => {
+        if (child.nodeType === Node.TEXT_NODE) {
+          const text = child.textContent;
+          if (text) {
+            runs.push(new docx.TextRun({
+              text,
+              bold: !!fmt.bold,
+              italics: !!fmt.italic,
+              underline: fmt.underline ? {} : undefined,
+              font: 'Times New Roman',
+              size: fmt.size || 24
+            }));
+          }
+        } else if (child.nodeType === Node.ELEMENT_NODE) {
+          const tag = child.tagName.toLowerCase();
+          if (tag === 'br') {
+            runs.push(new docx.TextRun({ text: '', break: 1 }));
+            return;
+          }
+          const newFmt = Object.assign({}, fmt);
+          if (tag === 'strong' || tag === 'b') newFmt.bold = true;
+          if (tag === 'em' || tag === 'i') newFmt.italic = true;
+          if (tag === 'u') newFmt.underline = true;
+          runs = runs.concat(parseInlineRuns(child, newFmt));
+        }
+      });
+      return runs;
+    }
+
+    function getAlignment(el) {
+      if (el.classList.contains('ql-align-center')) return docx.AlignmentType.CENTER;
+      if (el.classList.contains('ql-align-right')) return docx.AlignmentType.RIGHT;
+      if (el.classList.contains('ql-align-justify')) return docx.AlignmentType.JUSTIFIED;
+      return docx.AlignmentType.LEFT;
+    }
+
+    // =========================================================================
+    // TẢI FILE XLSX — bóc tách từng cột vào ô Excel, tự căn độ rộng cột
+    // để bảng không bị dồn chữ / lệch cột (UTF-8 tiếng Việt được SheetJS xử lý native).
+    // =========================================================================
     downloadXlsxBtn.addEventListener('click', () => {
       const rows = [];
       rawStructuredLines.forEach(l => {
@@ -375,10 +552,29 @@
         }
       });
 
+      if (rows.length === 0) {
+        alert('Không có dữ liệu để xuất Excel.');
+        return;
+      }
+
       const worksheet = XLSX.utils.aoa_to_sheet(rows);
+
+      // Tự động tính độ rộng cột dựa trên nội dung dài nhất mỗi cột
+      const numCols = Math.max(...rows.map(r => r.length));
+      const colWidths = [];
+      for (let c = 0; c < numCols; c++) {
+        let maxLen = 8;
+        rows.forEach(r => {
+          const cell = r[c];
+          if (cell && String(cell).length > maxLen) maxLen = String(cell).length;
+        });
+        colWidths.push({ wch: Math.min(maxLen + 2, 60) });
+      }
+      worksheet['!cols'] = colWidths;
+
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, 'DuLieu');
-      XLSX.writeFile(workbook, `DuLieu-Excel-${Date.now()}.xlsx`);
+      XLSX.writeFile(workbook, `DuLieu-Excel-${Date.now()}.xlsx`, { bookType: 'xlsx', type: 'binary' });
     });
 
     downloadTxtBtn.addEventListener('click', () => {
