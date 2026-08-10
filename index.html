@@ -54,13 +54,24 @@
     </div>
 
     <div class="flex flex-wrap items-center justify-between gap-4 bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-      <div class="flex items-center space-x-3">
-        <label for="language" class="text-sm font-medium">Ngôn ngữ OCR:</label>
-        <select id="language" class="border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <option value="vie+eng" selected>Tiếng Việt + Tiếng Anh</option>
-          <option value="vie">Chỉ Tiếng Việt</option>
-          <option value="eng">Chỉ Tiếng Anh</option>
-        </select>
+      <div class="flex flex-wrap items-center gap-4">
+        <div class="flex items-center space-x-3">
+          <label for="language" class="text-sm font-medium">Ngôn ngữ OCR:</label>
+          <select id="language" class="border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="vie+eng" selected>Tiếng Việt + Tiếng Anh</option>
+            <option value="vie">Chỉ Tiếng Việt</option>
+            <option value="eng">Chỉ Tiếng Anh</option>
+          </select>
+        </div>
+
+        <div class="flex items-center space-x-3">
+          <label for="docType" class="text-sm font-medium">Kiểu nội dung nguồn:</label>
+          <select id="docType" class="border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="auto" selected>Tự động nhận diện</option>
+            <option value="text">Văn bản / Báo cáo (ít hoặc không có bảng)</option>
+            <option value="table">Biểu mẫu / Bảng biểu (nhiều bảng, dữ liệu dạng lưới)</option>
+          </select>
+        </div>
       </div>
 
       <button id="convertBtn" disabled class="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-medium px-6 py-2.5 rounded-lg transition shadow-sm">
@@ -131,6 +142,7 @@
     const progressBar = document.getElementById('progressBar');
     const progressPercent = document.getElementById('progressPercent');
     const languageSelect = document.getElementById('language');
+    const docTypeSelect = document.getElementById('docType');
 
     let selectedFile = null;
     let rawStructuredLines = [];
@@ -183,6 +195,7 @@
 
       try {
         const lang = languageSelect.value;
+        const docType = docTypeSelect.value; // 'auto' | 'text' | 'table'
         if (selectedFile.type === 'application/pdf') {
           await processPdf(selectedFile, lang);
         } else {
@@ -190,7 +203,8 @@
         }
 
         classifyHeaders(rawStructuredLines);
-        smoothTableDetection(rawStructuredLines);
+        smoothTableDetection(rawStructuredLines, docType);
+        rawStructuredLines = rebuildTableBlocks(rawStructuredLines, docType);
 
         renderFormattedContent();
         setDownloadButtonsState(false);
@@ -296,7 +310,8 @@
           rawHeight: maxHeight,     // dùng để phân loại tiêu đề sau (theo median toàn văn bản)
           isHeader: false,
           isTable: cells.length > 1,
-          cells: cells.map(c => c.replace(/[ \t]+/g, ' ').trim()).filter(c => c !== '')
+          cells: cells.map(c => c.replace(/[ \t]+/g, ' ').trim()).filter(c => c !== ''),
+          items: l.items    // giữ lại toạ độ gốc để dựng lại bảng theo cụm cột chung cho cả khối
         };
       });
     }
@@ -336,8 +351,21 @@
       });
     }
 
-    // ---------- Làm mượt phát hiện bảng: chỉ giữ là bảng nếu có ít nhất 2 dòng liên tiếp giống cấu trúc cột ----------
-    function smoothTableDetection(lines) {
+    // ---------- Làm mượt phát hiện bảng ----------
+    // docType điều chỉnh mức độ "tin tưởng" vào việc 1 dòng có phải là hàng bảng hay không:
+    //  - 'text' : coi toàn bộ là văn bản thường, KHÔNG dựng bảng (tránh nhận nhầm bảng
+    //             trong báo cáo/văn bản thuần, vốn hay có các dòng canh cột ngẫu nhiên).
+    //  - 'table': tin tưởng gần như tuyệt đối vào phát hiện ban đầu, kể cả dòng đơn lẻ,
+    //             vì biểu mẫu/bảng biểu thường có nhiều hàng chỉ 1 dòng (cặp khoá:giá trị).
+    //  - 'auto' : như cũ - chỉ giữ là bảng nếu có ít nhất 2 dòng liên tiếp cùng cấu trúc cột.
+    function smoothTableDetection(lines, docType = 'auto') {
+      if (docType === 'text') {
+        lines.forEach(l => { l.isTable = false; l.cells = [l.text]; });
+        return lines;
+      }
+      if (docType === 'table') {
+        return lines; // giữ nguyên isTable đã phát hiện, không lọc bớt dòng đơn lẻ
+      }
       for (let i = 0; i < lines.length; i++) {
         if (!lines[i].isTable) continue;
         const prevOk = i > 0 && lines[i - 1].isTable;
@@ -348,6 +376,143 @@
         }
       }
       return lines;
+    }
+
+    // ---------- Dựng lại cấu trúc bảng theo khối (khắc phục lệch cột / lẫn hàng) ----------
+    // Vấn đề của cách tách cột "theo từng dòng riêng lẻ": mỗi dòng tự suy ra số cột
+    // và vị trí cột của chính nó, nên khi 1 ô bị wrap xuống nhiều dòng hoặc căn lệch
+    // nhẹ, các dòng sẽ ra số cột khác nhau => bảng bị lẫn hàng, sai cột.
+    // Cách khắc phục: với MỖI KHỐI các dòng liên tiếp được đánh dấu isTable, ta:
+    //   1) Gom toàn bộ toạ độ x nơi "bắt đầu 1 cụm chữ mới" trên tất cả các dòng của khối
+    //   2) Gộp các toạ độ x gần nhau thành các "ranh giới cột" DÙNG CHUNG cho cả khối
+    //      (chỉ giữ ranh giới nào lặp lại đủ nhiều lần để loại nhiễu)
+    //   3) Gán lại từng item của từng dòng vào đúng cột theo ranh giới chung đó
+    //   4) Dòng nào không có chữ ở cột đầu tiên (tức là phần chữ bị xuống dòng của ô
+    //      phía trên) sẽ được NỐI vào đúng ô tương ứng của hàng ngay trước, thay vì
+    //      tạo thành một hàng bảng mới.
+    function rebuildTableBlocks(lines, docType = 'auto') {
+      const result = [];
+      let i = 0;
+      while (i < lines.length) {
+        if (!lines[i].isTable) { result.push(lines[i]); i++; continue; }
+        let j = i;
+        while (j < lines.length && lines[j].isTable) j++;
+        const block = lines.slice(i, j);
+        result.push(...reconstructTableBlock(block, docType));
+        i = j;
+      }
+      return result;
+    }
+
+    function reconstructTableBlock(block, docType = 'auto') {
+      // Chỉ áp dụng được với các dòng trích từ PDF văn bản (có toạ độ items gốc).
+      // Dòng đến từ OCR ảnh không có toạ độ item chi tiết => giữ nguyên như cũ.
+      if (!block.every(l => l.items && l.items.length)) return block;
+
+      const refHeight = block.reduce((s, l) => s + l.rawHeight, 0) / block.length || 12;
+      const columnGapThreshold = refHeight * 1.8;
+      const spaceThreshold = refHeight * 0.22;
+
+      // B1: thu thập toạ độ x bắt đầu của từng cụm chữ trên mỗi dòng
+      const startXs = [];
+      block.forEach(line => {
+        const its = line.items;
+        if (its.length) startXs.push(its[0].x);
+        for (let k = 1; k < its.length; k++) {
+          const gap = its[k].x - (its[k - 1].x + its[k - 1].width);
+          if (gap > columnGapThreshold) startXs.push(its[k].x);
+        }
+      });
+      if (startXs.length === 0) return block;
+
+      // B2: gộp các toạ độ x gần nhau thành ranh giới cột dùng chung
+      // 'table': lưới bảng biểu thường có nhiều cột hẹp, ô ngắn (1 dòng) => cần ranh giới
+      //          sát nhau hơn và chấp nhận cột chỉ xuất hiện ở vài hàng.
+      // 'text' / 'auto': văn bản/báo cáo => ranh giới cần lặp lại nhiều hơn mới tin cậy,
+      //          tránh nhận nhầm các dòng văn xuôi canh lề ngẫu nhiên thành bảng nhiều cột.
+      const clusterTolerance = docType === 'table' ? refHeight * 0.9 : refHeight * 1.2;
+      const supportRatio = docType === 'table' ? 0.08 : 0.15;
+      const minSupportFloor = docType === 'table' ? 1 : 2;
+
+      startXs.sort((a, b) => a - b);
+      const clusters = [];
+      startXs.forEach(x => {
+        const last = clusters[clusters.length - 1];
+        if (last && x - (last.sum / last.count) < clusterTolerance) {
+          last.sum += x; last.count++;
+        } else {
+          clusters.push({ sum: x, count: 1 });
+        }
+      });
+
+      // Chỉ giữ ranh giới cột nào xuất hiện đủ nhiều lần (loại nhiễu do 1 dòng lệch bất thường)
+      const minSupport = Math.max(minSupportFloor, Math.round(block.length * supportRatio));
+      const boundaries = clusters
+        .filter(c => c.count >= minSupport)
+        .map(c => c.sum / c.count)
+        .sort((a, b) => a - b);
+
+      const numCols = boundaries.length;
+      if (numCols <= 1) return block; // không đủ căn cứ để coi là bảng nhiều cột
+
+      function colIndexOf(x) {
+        let best = 0, bestDist = Infinity;
+        boundaries.forEach((b, idx) => {
+          const d = Math.abs(x - b);
+          if (d < bestDist) { bestDist = d; best = idx; }
+        });
+        return best;
+      }
+
+      // B3: gán lại item của từng dòng vào đúng cột theo ranh giới chung
+      const rows = block.map(line => {
+        const cellsArr = new Array(numCols).fill('');
+        let prevItem = null;
+        let prevCol = -1;
+        line.items.forEach(item => {
+          const col = colIndexOf(item.x);
+          let sep = '';
+          if (prevItem && col === prevCol) {
+            const gap = item.x - (prevItem.x + prevItem.width);
+            if (gap > spaceThreshold) sep = ' ';
+          } else if (cellsArr[col] !== '') {
+            sep = ' ';
+          }
+          cellsArr[col] += sep + item.text;
+          prevItem = item;
+          prevCol = col;
+        });
+        return cellsArr.map(c => c.replace(/[ \t]+/g, ' ').trim());
+      });
+
+      // B4: gộp dòng "nối tiếp" (không có chữ ở cột đầu tiên) vào hàng ngay trước.
+      // Ở chế độ 'table', mỗi dòng thường là 1 hàng độc lập thật sự (biểu mẫu key-value
+      // dạng lưới đều), nên KHÔNG gộp để tránh mất hàng dữ liệu thật.
+      let merged;
+      if (docType === 'table') {
+        merged = rows.map(r => r.slice());
+      } else {
+        merged = [];
+        rows.forEach(cells => {
+          const isContinuation = merged.length > 0 && cells[0] === '';
+          if (isContinuation) {
+            const prev = merged[merged.length - 1];
+            cells.forEach((c, idx) => {
+              if (c) prev[idx] = prev[idx] ? `${prev[idx]} ${c}` : c;
+            });
+          } else {
+            merged.push(cells.slice());
+          }
+        });
+      }
+
+      return merged.map(cells => ({
+        text: cells.filter(c => c !== '').join(' | '),
+        rawHeight: refHeight,
+        isHeader: false,
+        isTable: true,
+        cells // giữ đủ số cột kể cả ô rỗng để bảng không bị lệch khi xuất Word/Excel
+      }));
     }
 
     function renderFormattedContent() {
