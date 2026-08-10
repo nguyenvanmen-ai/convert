@@ -13,8 +13,11 @@
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <!-- SheetJS cho Excel -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <!-- docx.js: tạo file Word CHUẨN OOXML thật sự (thay cho html-docx-js hay bể khung / lỗi font) -->
-  <script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.js"></script>
+  <!-- docx.js: tạo file Word CHUẨN OOXML thật sự (thay cho html-docx-js hay bể khung / lỗi font).
+       LƯU Ý: phải dùng bản UMD (index.umd.js) thì mới tạo biến toàn cục `docx` khi nhúng
+       bằng thẻ <script> thường; bản build/index.js là ESM nên không tạo global, gây lỗi
+       "docx is not defined". -->
+  <script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.umd.js"></script>
   <!-- Quill Editor -->
   <link href="https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.snow.css" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.js"></script>
@@ -232,16 +235,23 @@
       const tolerance = 5;
 
       items.forEach(item => {
-        if (!item.str.trim()) return;
+        // Chỉ bỏ qua item thực sự rỗng, KHÔNG bỏ qua item chỉ chứa khoảng trắng
+        // (PDF.js thường phát ra khoảng trắng như một item riêng - bỏ nó đi làm mất
+        // thông tin ranh giới từ, khiến việc ghép chữ dựa vào khoảng cách bị sai).
+        if (item.str === '') return;
         const x = item.transform[4];
         const y = item.transform[5];
         const height = Math.abs(item.transform[3]) || 12;
+        // pdf.js cung cấp sẵn item.width (đơn vị PDF). Nếu thiếu, ước lượng dự phòng.
+        const width = (typeof item.width === 'number' && item.width > 0)
+          ? item.width
+          : item.str.length * height * 0.5;
 
         let line = lineMap.find(l => Math.abs(l.y - y) < tolerance);
         if (line) {
-          line.items.push({ x, text: item.str, height });
+          line.items.push({ x, text: item.str, height, width });
         } else {
-          lineMap.push({ y, items: [{ x, text: item.str, height }] });
+          lineMap.push({ y, items: [{ x, text: item.str, height, width }] });
         }
       });
 
@@ -257,22 +267,36 @@
           const curr = l.items[i];
           const prev = l.items[i - 1];
 
-          if (prev && (curr.x - (prev.x + prev.text.length * 5)) > 20) {
-            cells.push(curCell.trim());
-            curCell = '';
+          if (prev) {
+            const gap = curr.x - (prev.x + prev.width);
+            const refHeight = Math.max(curr.height, prev.height) || 12;
+            const columnGapThreshold = refHeight * 1.8; // khoảng cách lớn => sang cột khác (bảng)
+            const spaceThreshold = refHeight * 0.22;     // khoảng cách vừa => có dấu cách giữa 2 từ
+
+            if (gap > columnGapThreshold) {
+              cells.push(curCell.trim());
+              curCell = '';
+              fullStr += ' ';
+            } else if (gap > spaceThreshold) {
+              curCell += ' ';
+              fullStr += ' ';
+            }
+            // gap nhỏ hoặc âm: ký tự liền của cùng một từ (thường gặp với dấu thanh
+            // tiếng Việt bị PDF tách thành nhiều item) => KHÔNG chèn khoảng trắng.
           }
-          curCell += curr.text + ' ';
-          fullStr += curr.text + ' ';
+
+          curCell += curr.text;
+          fullStr += curr.text;
         }
         cells.push(curCell.trim());
 
         const maxHeight = Math.max(...l.items.map(it => it.height));
         return {
-          text: fullStr.trim(),
+          text: fullStr.replace(/[ \t]+/g, ' ').trim(),
           rawHeight: maxHeight,     // dùng để phân loại tiêu đề sau (theo median toàn văn bản)
           isHeader: false,
           isTable: cells.length > 1,
-          cells: cells.filter(c => c !== '')
+          cells: cells.map(c => c.replace(/[ \t]+/g, ' ').trim()).filter(c => c !== '')
         };
       });
     }
@@ -368,11 +392,40 @@
     // được dựng thành đối tượng Paragraph/Table thật của Word, và font được gán
     // rõ ràng (Times New Roman) cho từng run văn bản nên không bị lỗi font.
     // =========================================================================
+    // Nếu vì lý do mạng/CDN mà thư viện docx.js chưa sẵn sàng, thử tải lại từ nguồn dự phòng.
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = src;
+        s.onload = resolve;
+        s.onerror = () => reject(new Error('Không tải được thư viện từ ' + src));
+        document.head.appendChild(s);
+      });
+    }
+
+    async function ensureDocxLibLoaded() {
+      if (typeof docx !== 'undefined' && docx.Document) return;
+      const fallbackUrls = [
+        'https://unpkg.com/docx@8.5.0/build/index.umd.js',
+        'https://cdn.jsdelivr.net/npm/docx@8.6.0/build/index.umd.js'
+      ];
+      for (const url of fallbackUrls) {
+        try {
+          await loadScript(url);
+          if (typeof docx !== 'undefined' && docx.Document) return;
+        } catch (e) { /* thử URL kế tiếp */ }
+      }
+      if (typeof docx === 'undefined' || !docx.Document) {
+        throw new Error('Không tải được thư viện tạo file Word (docx.js). Vui lòng kiểm tra kết nối mạng rồi tải lại trang.');
+      }
+    }
+
     downloadDocxBtn.addEventListener('click', async () => {
       downloadDocxBtn.disabled = true;
       const originalLabel = downloadDocxBtn.textContent;
       downloadDocxBtn.textContent = 'Đang tạo file...';
       try {
+        await ensureDocxLibLoaded();
         const blocks = elementToDocxBlocks(quill.root);
 
         const doc = new docx.Document({
