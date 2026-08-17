@@ -386,11 +386,12 @@
       }
       try {
         ocrWorker = await Tesseract.createWorker(lang, 1, {
-          // Một số trình duyệt/CSP chặt sẽ chặn việc tạo Worker qua blob URL.
-          // Tải trực tiếp worker.min.js từ CDN thay vì qua blob giúp tăng khả năng
-          // tương thích khi mở file .html trực tiếp bằng trình duyệt.
-          workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
-          workerBlobURL: false
+          // GIỮ MẶC ĐỊNH workerBlobURL: true (không set false). Tesseract.js sẽ tải nội
+          // dung worker.min.js về rồi tạo Worker từ blob URL (luôn được coi là CÙNG-ORIGIN
+          // với trang), nhờ vậy tránh được lỗi trình duyệt chặn Worker khác-origin khi
+          // host thật (GitHub Pages, server riêng...). Đặt workerBlobURL:false sẽ khiến
+          // Worker bị tạo thẳng từ URL của CDN (khác-origin) và bị trình duyệt chặn.
+          workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js'
         });
         ocrWorkerLang = lang;
         return ocrWorker;
