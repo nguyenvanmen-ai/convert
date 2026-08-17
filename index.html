@@ -72,6 +72,11 @@
             <option value="table">Biểu mẫu / Bảng biểu (nhiều bảng, dữ liệu dạng lưới)</option>
           </select>
         </div>
+
+        <label class="flex items-center space-x-2 text-sm font-medium cursor-pointer" title="Bật khi PDF dùng font tiếng Việt cũ/không chuẩn khiến chữ trích ra bị sai (vd: TJY BAN thay vì ỦY BAN). Khi bật, toàn bộ trang sẽ được đọc bằng OCR thay vì lớp text PDF.">
+          <input type="checkbox" id="forceOcr" class="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+          <span>Luôn dùng OCR (PDF bị lỗi font/mã hoá)</span>
+        </label>
       </div>
 
       <button id="convertBtn" disabled class="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-medium px-6 py-2.5 rounded-lg transition shadow-sm">
@@ -143,6 +148,7 @@
     const progressPercent = document.getElementById('progressPercent');
     const languageSelect = document.getElementById('language');
     const docTypeSelect = document.getElementById('docType');
+    const forceOcrCheckbox = document.getElementById('forceOcr');
 
     let selectedFile = null;
     let rawStructuredLines = [];
@@ -196,8 +202,11 @@
       try {
         const lang = languageSelect.value;
         const docType = docTypeSelect.value; // 'auto' | 'text' | 'table'
-        if (selectedFile.type === 'application/pdf') {
-          await processPdf(selectedFile, lang);
+        const forceOcr = forceOcrCheckbox.checked;
+        const isPdf = selectedFile.type === 'application/pdf'
+          || selectedFile.name.toLowerCase().endsWith('.pdf');
+        if (isPdf) {
+          await processPdf(selectedFile, lang, forceOcr);
         } else {
           await processImage(selectedFile, lang);
         }
@@ -213,35 +222,77 @@
         console.error(err);
         alert('Lỗi xử lý: ' + err.message);
         updateProgress('Thất bại', 0);
+        await releaseOcrWorker(); // worker có thể ở trạng thái lỗi, giải phóng để lần chạy sau khởi tạo lại sạch
       } finally {
         convertBtn.disabled = false;
       }
     });
 
     // ---------- Trích xuất PDF ----------
-    async function processPdf(file, lang) {
+    async function processPdf(file, lang, forceOcr) {
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
 
       for (let p = 1; p <= pdf.numPages; p++) {
         updateProgress(`Đang trích xuất trang ${p}/${pdf.numPages}...`, (p - 1) / pdf.numPages);
         const page = await pdf.getPage(p);
+
+        if (forceOcr) {
+          const ocrLines = await ocrPage(page, lang);
+          rawStructuredLines.push(...ocrLines);
+          continue;
+        }
+
         const textContent = await page.getTextContent();
 
         if (textContent.items.length > 0) {
-          const lines = parsePdfLines(textContent.items);
+          let lines = parsePdfLines(textContent.items);
+
+          // Tự động phát hiện lớp text PDF bị lỗi font/mã hoá (PDF dùng font tiếng Việt
+          // cũ không chuẩn khiến ký tự trích ra sai, vd: "TJY BAN" thay vì "ỦY BAN").
+          // Khi nghi ngờ, bỏ lớp text lỗi và đọc lại trang bằng OCR cho đáng tin cậy.
+          if (lang.includes('vie') && looksLikeBrokenVietnamese(lines)) {
+            updateProgress(`Phát hiện font lỗi ở trang ${p}, chuyển sang OCR...`, (p - 1) / pdf.numPages);
+            lines = await ocrPage(page, lang);
+          }
+
           rawStructuredLines.push(...lines);
         } else {
-          const viewport = page.getViewport({ scale: 2.0 });
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-          canvas.height = viewport.height;
-          canvas.width = viewport.width;
-          await page.render({ canvasContext: ctx, viewport: viewport }).promise;
-          const ocrLines = await runTesseract(canvas, lang);
+          const ocrLines = await ocrPage(page, lang);
           rawStructuredLines.push(...ocrLines);
         }
       }
+    }
+
+    // Render 1 trang PDF thành ảnh rồi OCR - dùng chung cho: PDF scan, ép OCR toàn bộ,
+    // và fallback tự động khi phát hiện lớp text PDF bị lỗi font.
+    async function ocrPage(page, lang) {
+      const viewport = page.getViewport({ scale: 2.0 });
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      canvas.height = viewport.height;
+      canvas.width = viewport.width;
+      await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+      return runTesseract(canvas, lang);
+    }
+
+    // Ước lượng nhanh: văn bản tiếng Việt hợp lệ (đặc biệt văn bản hành chính) thường có
+    // tỉ lệ ký tự có dấu (ă,â,ê,ô,ơ,ư + dấu thanh) khá cao. Nếu tỉ lệ này gần như bằng 0
+    // trong khi có đủ số chữ để đánh giá, khả năng cao lớp text PDF đã bị ánh xạ sai font.
+    const VN_DIACRITIC_REGEX = /[àáạảãăằắặẳẵâầấậẩẫèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i;
+    function looksLikeBrokenVietnamese(lines) {
+      let letterCount = 0;
+      let diacriticCount = 0;
+      lines.forEach(l => {
+        for (const ch of l.text) {
+          if (/[a-zà-ỹ]/i.test(ch)) {
+            letterCount++;
+            if (VN_DIACRITIC_REGEX.test(ch)) diacriticCount++;
+          }
+        }
+      });
+      if (letterCount < 40) return false; // quá ít chữ để đánh giá đáng tin cậy
+      return (diacriticCount / letterCount) < 0.02;
     }
 
     function parsePdfLines(items) {
@@ -322,10 +373,50 @@
       rawStructuredLines.push(...lines);
     }
 
+    // Dùng chung 1 worker Tesseract cho cả quá trình xử lý (nhanh hơn và ít lỗi hơn
+    // so với tạo worker mới cho từng trang/ảnh).
+    let ocrWorker = null;
+    let ocrWorkerLang = null;
+
+    async function getOcrWorker(lang) {
+      if (ocrWorker && ocrWorkerLang === lang) return ocrWorker;
+      if (ocrWorker) {
+        try { await ocrWorker.terminate(); } catch (e) { /* bỏ qua */ }
+        ocrWorker = null;
+      }
+      try {
+        ocrWorker = await Tesseract.createWorker(lang, 1, {
+          // Một số trình duyệt/CSP chặt sẽ chặn việc tạo Worker qua blob URL.
+          // Tải trực tiếp worker.min.js từ CDN thay vì qua blob giúp tăng khả năng
+          // tương thích khi mở file .html trực tiếp bằng trình duyệt.
+          workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
+          workerBlobURL: false
+        });
+        ocrWorkerLang = lang;
+        return ocrWorker;
+      } catch (err) {
+        ocrWorker = null;
+        throw new Error('Không khởi tạo được công cụ OCR (Tesseract) cho ngôn ngữ "' + lang + '". '
+          + 'Nguyên nhân thường gặp: mất kết nối mạng khi tải dữ liệu ngôn ngữ. Chi tiết: ' + err.message);
+      }
+    }
+
+    async function releaseOcrWorker() {
+      if (ocrWorker) {
+        try { await ocrWorker.terminate(); } catch (e) { /* bỏ qua */ }
+        ocrWorker = null;
+        ocrWorkerLang = null;
+      }
+    }
+
     async function runTesseract(source, lang) {
-      const worker = await Tesseract.createWorker(lang, 1);
-      const res = await worker.recognize(source);
-      await worker.terminate();
+      const worker = await getOcrWorker(lang);
+      let res;
+      try {
+        res = await worker.recognize(source);
+      } catch (err) {
+        throw new Error('Lỗi khi nhận dạng OCR: ' + err.message);
+      }
 
       return res.data.lines.map(l => {
         const text = l.text.trim();
